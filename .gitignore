@@ -22,3 +22,8 @@ ENV/
 env.bak/
 venv.bak/
 
+
+/data/
+/results/
+/generation_outputs/
+/saved_models/

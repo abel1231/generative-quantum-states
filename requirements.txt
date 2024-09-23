@@ -1,6 +1,6 @@
 numpy
-torch
-pennylane
+torch==2.0.0
+pennylane==0.30.0
 pennylane-lightning
 tqdm
 scipy
@@ -11,5 +11,7 @@ scikit-learn
 pandas
 tensorboard
 qutip
-jax
-neural-tangents
+ipykernel
+# jax
+torch_geometric
+# neural-tangents

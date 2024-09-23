@@ -3,7 +3,8 @@ script to sample from conditional transformers for Heisenberg data
 """
 
 import argparse
-import json
+import glob
+import json, random
 import numpy as np
 import os
 import torch
@@ -14,46 +15,54 @@ from src.models.gctransformer import init_gctransformer, get_sample_structure
 from src.models.graph_encoder import get_graph_encoder
 from src.utils import filter_folder_for_files
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--results-dir', type=str, default=None, required=True)
-parser.add_argument('--snapshots', type=int, default=20000,
-                    help='number of generated samples for evaluation')
-parser.add_argument('--seed', type=int, default=None)
-args = parser.parse_args()
+from src.models.mlp import MLP
+from src.models.transformer import init_conditional_transformer
+from src.training.rydberg_trainers import RydbergConditionalTransformerTrainer
+from heisenberg_train_transformer import load_data
 
 
-def main(results_dir, seed, snapshots):
-    model_args, hparams = load_model_args(results_dir)
+def main():
+    model_dir = 'results/conditional_heisenberg_N10/model/ns1000/iter50000_lr0.001_wd0_bs512_dropout0.0_lrschedulewarmup_cosine20240518-014155'
+    model_args, hparams = load_model_args(model_dir)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test_dir', type=str, default='N_10_NM_1000_S_20')
+    parser.add_argument('--snapshots', type=int, default=20000,
+                        help='number of generated samples for evaluation')
+    # parser.add_argument('--num_measurements', type=int, default=1000)
+    # parser.add_argument('--num_qubits', type=int, default=10)
+    parser.add_argument('--seed2', type=int, default=123)
+    add_dict_to_argparser(parser, model_args) # update latest args according to argparse
+    args = parser.parse_args()
+    args.data_dir = args.test_dir
 
     # device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # lattice size
-    rows, cols = tuple(map(int, str(model_args['train_size']).split('x')))
-    qubits = rows * cols
-
-    # intialize model
-    ckpt_fp = os.path.join(results_dir, 'checkpoints', f'checkpoint_final.pth.tar')
-    transformer = load_model(
-        ckpt_fp,
-        sample_structure=model_args['sample_structure'],
-        qubits=qubits,
-        tf_arch=model_args['tf_arch'],
-        gcn_arch=model_args['gcn_arch'],
-        gcn_features=model_args['gcn_features'],
-        dropout=hparams['dropout'],
-        device=device
-    )
-
-    gcn_features = model_args['gcn_features']
-    train_size = model_args['train_size']
-    data_root = model_args['data_root']
-
     # generator for random numbers
-    rng = np.random.default_rng(seed=seed)
+    # rng = np.random.default_rng(seed=args.seed2)
+    set_seed(args.seed2)
+    
+    for lst in glob.glob(model_dir):
+        print(lst)
+        checkpoints = sorted(glob.glob(f"{lst}/checkpoints/checkpoint*.pth.tar"))[::-1]
 
-    run_sampling(transformer, results_dir, data_root, train_size, snapshots, rng,
-                 gcn_features, device)
+        out_dir = 'generation_outputs'
+        if not os.path.isdir(out_dir):
+            os.makedirs(out_dir)
+
+        for checkpoint_one in checkpoints:
+            # intialize model
+            ckpt_fp = checkpoint_one
+            transformer = load_model(
+                            ckpt_fp,
+                            args,
+                            hparams,
+                            device=device
+                        )
+
+            save_dir = os.path.join(out_dir, checkpoint_one)
+            run_sampling(transformer, args, save_dir, args.snapshots, checkpoint_one.strip().split('/')[-1].split('.')[0])
 
 
 def load_model_args(results_dir):
@@ -68,34 +77,31 @@ def load_model_args(results_dir):
     return model_args, hparams
 
 
-def load_model(checkpoint_fp, sample_structure, qubits, tf_arch, gcn_arch, gcn_features,
-               dropout, device):
+def load_model(checkpoint_fp, args, hparams, device):
+    d_model = TF_ARCHS[args.tf_arch]['d_model']
+    n_head = TF_ARCHS[args.tf_arch]['n_head']
+    n_layers = TF_ARCHS[args.tf_arch]['n_layers']
     # initialize graph encoder
-    encoder = get_graph_encoder(
-        gcn_arch,
-        in_node_dim=1 if gcn_features == WDEGREE_FEATURE else qubits,
-        gcn_dim=GCN_ARCHS[gcn_arch]['gcn_dim'],
-        gcn_layers=GCN_ARCHS[gcn_arch]['gcn_layers'],
-        d_model=TF_ARCHS[tf_arch]['d_model'],
-        qubits=qubits
-    )
+    encoder = MLP(input_size=args.n_vars, output_size=d_model, 
+                  n_layers=1, hidden_size=128, activation='ELU', 
+                  input_layer_norm=False,
+                  output_batch_size=None, device=device,
+                  output_factor=1.)
 
     # structure of mmt sequence
-    sample_struct = get_sample_structure(version=sample_structure)
+    # sample_struct = get_sample_structure(version=sample_structure)
 
     # initialize transformer
-    transformer = init_gctransformer(
-        n_outcomes=NUM_MMT_OUTCOMES,
+    transformer = init_conditional_transformer(
+        n_outcomes=6,
         encoder=encoder,
-        n_layers=TF_ARCHS[tf_arch]['n_layers'],
-        d_model=TF_ARCHS[tf_arch]['d_model'],
-        d_ff=4 * TF_ARCHS[tf_arch]['d_model'],
-        n_heads=TF_ARCHS[tf_arch]['n_head'],
-        dropout=dropout,
-        pad_token=sample_struct.pad_token,
-        start_token=sample_struct.start_token,
-        end_token=sample_struct.end_token,
-        token_shift=sample_struct.token_shift
+        n_layers=n_layers,
+        d_model=d_model,
+        d_ff=4 * d_model,
+        n_heads=n_head,
+        dropout=hparams['dropout'],
+        version=hparams['use_padding'],
+        use_prompt=False, #***
     )
 
     # load weights
@@ -109,39 +115,24 @@ def load_model(checkpoint_fp, sample_structure, qubits, tf_arch, gcn_arch, gcn_f
     return transformer
 
 
-def run_sampling(transformer, results_dir, data_dir, train_size, snapshots, rng,
-                 gcn_features, device):
+def run_sampling(transformer, args, save_dir, snapshots, checkpoint_one):
     # generate samples for test hamiltonians
-    test_data_dir = os.path.join(data_dir, train_size, 'test')
-    couplings, couplings_ids = load_couplings(test_data_dir)
-    samples_test = generate_samples(transformer, couplings, couplings_ids, snapshots,
-                                    device, rng, gcn_features)
-
-    # save samples
-    test_save_dir = os.path.join(results_dir, 'samples', 'test', 'model')
-
+    test_data = load_data(args, split='test')
+    # couplings, couplings_ids = load_couplings(test_data_dir)
+    test_save_dir = os.path.join(save_dir)
     if not os.path.exists(test_save_dir):
         os.makedirs(test_save_dir)
 
-    for k, s in samples_test.items():
-        np.save(os.path.join(test_save_dir, f'model_samples_{snapshots}_id{k}.npy'), s)
+    for i, condition in enumerate(test_data['conditions']):
+        condition = torch.from_numpy(np.array([condition])).float().to(transformer.device)
+        gen_samples = transformer.sample_batch(cond_var=condition, batch_size=snapshots,
+                                               num_qubits=args.num_qubits)
 
-    # generate samples for train hamiltonians
-    train_data_dir = os.path.join(data_dir, train_size, 'train')
-    couplings, couplings_ids = load_couplings(train_data_dir)
-    samples_train = generate_samples(transformer, couplings, couplings_ids, snapshots,
-                                     device, rng, gcn_features)
-
-    # save samples
-    train_save_dir = os.path.join(results_dir, 'samples', 'train', 'model')
-
-    if not os.path.exists(train_save_dir):
-        os.makedirs(train_save_dir)
-
-    for k, s in samples_train.items():
-        np.save(os.path.join(train_save_dir, f'model_samples_{snapshots}_id{k}.npy'), s)
-
-    return samples_train, samples_test
+        # save samples
+        gen_samples = gen_samples.astype(int)
+        np.savetxt(os.path.join(test_save_dir, f'samples_{snapshots}_id_{i+1}.txt'), 
+                   gen_samples, 
+                   fmt='%d', delimiter=',')
 
 
 def load_couplings(data_dir):
@@ -165,5 +156,44 @@ def load_couplings(data_dir):
     return coupling_matrices_array, coupling_matrices_ids_list
 
 
+def add_dict_to_argparser(parser, default_dict):
+    for k, v in default_dict.items():
+        v_type = type(v)
+        if v is None:
+            v_type = str
+        elif isinstance(v, bool):
+            v_type = str2bool
+        parser.add_argument(f"--{k}", default=v, type=v_type)
+
+
+def str2bool(v):
+    """
+    https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
+    """
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("boolean value expected")
+    
+
+def set_seed(seed: int):
+    """
+    Helper function for reproducible behavior to set the seed in `random`, `numpy`, `torch` and/or `tf` (if installed).
+
+    Args:
+        seed (`int`): The seed to set.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        # ^^ safe to call this function even if cuda is not available
+
+
 if __name__ == '__main__':
-    main(results_dir=args.results_dir, seed=args.seed, snapshots=args.snapshots)
+    main()

@@ -1,9 +1,10 @@
 import copy
 import numpy as np
-import time
+import time, os
 import torch
 import torch.backends.cudnn as cudnn
 from tqdm.auto import tqdm
+from typing import Dict, Any, Union
 
 from constants import *
 from src.models.transformer import ConditionalTransformer, LabelSmoothing
@@ -54,6 +55,8 @@ class RydbergConditionalTransformerTrainer():
             rng: np.random.Generator,
             # tensorboard_dir: str = None,
             smoothing: float = 0.0,
+            save_interval: int = 10000,
+            save_dir: str = None,
             eval_every: int = 1000,
             epoch_mode: bool = False,
             transfomer_version: int = 0,
@@ -78,6 +81,9 @@ class RydbergConditionalTransformerTrainer():
         self.batch_size = batch_size
         self.test_dataset = test_dataset
         self.device = device
+        self.save_interval = save_interval
+        self.checkpoint_dir = os.path.join(save_dir, 'checkpoints/')
+        self.save_dir = save_dir
         if epoch_mode:
             self.total_steps = int(1 + len(train_dataset) / batch_size) * iterations
         else:
@@ -115,7 +121,7 @@ class RydbergConditionalTransformerTrainer():
                 'model_state_dict': copy.deepcopy(self.model.state_dict()),
                 'optimizer': copy.deepcopy(self.optimizer.state_dict()),
             },
-            ckpt_fn='checkpoint.pth.tar' if not is_best else 'model_best_pth.tar'
+            ckpt_fn=f'checkpoint_{epoch}.pth.tar' if not is_best else 'model_best.pth.tar', epoch=epoch
         )
         return model_fp
 
@@ -153,6 +159,9 @@ class RydbergConditionalTransformerTrainer():
                 avg_loss = self.total_loss_meter.average()
                 self._reset_meters()
                 pbar.set_postfix(loss=avg_loss)
+            
+            if (step+1) % self.save_interval == 0:
+                self.save_model(step+1, is_best=False)
 
         return self.model
 
@@ -183,6 +192,15 @@ class RydbergConditionalTransformerTrainer():
         pstr = f'step {step} | lr: {round(self.scheduler.get_last_lr()[0], 8)}, train loss: {train_loss:.4f}'
         pstr += f', test loss: {test_loss:.4f}'
         return pstr
+    
+    def _save_model(self, ckpt: Dict[str, Any], ckpt_fn: str = None, epoch: int = None) -> str:
+        """ basic method to save checkpoints stored as a dict in the ckpt variable """
+        if ckpt_fn is None:
+            ckpt_fn = f'checkpoint_iter-{epoch}.pth.tar'
+
+        save_as = os.path.join(self.save_dir, ckpt_fn)
+        torch.save(ckpt, save_as)
+        return save_as
 
     def _initialize_optimizers(self):
         self.optimizer = torch.optim.AdamW(

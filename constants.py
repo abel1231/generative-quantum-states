@@ -10,7 +10,7 @@ NUM_MMT_OUTCOMES = 6
 
 # transformer architectures
 TF_ARCHS = {
-    'transformer_l4_d128_h4': dict(d_model=128, n_layers=4, n_head=4),
+    'transformer_l4_d128_h4': dict(d_model=128, n_layers=2, n_head=4),
     'transformer_l8_d32_h8': dict(d_model=32, n_layers=8, n_head=8),
 }
 

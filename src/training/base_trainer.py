@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import os
 import torch
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from typing import Dict, Any, Union
 
 from src.data.loading import DatasetGCTransformer
@@ -37,7 +37,7 @@ class BaseTrainer(ABC):
 
         # tensorboard
         tensorboard_dir = tensorboard_dir if tensorboard_dir is not None else 'tensorboard'
-        self.summary_writer = SummaryWriter(os.path.join(save_dir, tensorboard_dir))
+        # self.summary_writer = SummaryWriter(os.path.join(save_dir, tensorboard_dir))
 
     def _save_model(self, ckpt: Dict[str, Any], ckpt_fn: str = None) -> str:
         """ basic method to save checkpoints stored as a dict in the ckpt variable """
