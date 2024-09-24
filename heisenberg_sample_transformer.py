@@ -22,7 +22,7 @@ from heisenberg_train_transformer import load_data
 
 
 def main():
-    model_dir = 'results/conditional_heisenberg_N10/model/ns1000/iter50000_lr0.001_wd0_bs512_dropout0.0_lrschedulewarmup_cosine20240518-014155'
+    model_dir = 'saved_models/N10_iter20000_lr0.001_wd0_bs512_dropout0.0_lrschedulewarmup_cosine_20240924-002927'
     model_args, hparams = load_model_args(model_dir)
 
     parser = argparse.ArgumentParser()
@@ -42,12 +42,14 @@ def main():
     # generator for random numbers
     # rng = np.random.default_rng(seed=args.seed2)
     set_seed(args.seed2)
+
+    data = load_data(args, split='test')
     
     for lst in glob.glob(model_dir):
         print(lst)
-        checkpoints = sorted(glob.glob(f"{lst}/checkpoints/checkpoint*.pth.tar"))[::-1]
+        checkpoints = sorted(glob.glob(f"{lst}/checkpoint*.pth.tar"))[::-1]
 
-        out_dir = 'generation_outputs'
+        out_dir = './generation_outputs'
         if not os.path.isdir(out_dir):
             os.makedirs(out_dir)
 
@@ -61,8 +63,8 @@ def main():
                             device=device
                         )
 
-            save_dir = os.path.join(out_dir, checkpoint_one)
-            run_sampling(transformer, args, save_dir, args.snapshots, checkpoint_one.strip().split('/')[-1].split('.')[0])
+            save_dir = os.path.join(out_dir, checkpoint_one.split('/')[1])
+            run_sampling(transformer, data, args, save_dir, args.snapshots, checkpoint_one.strip().split('/')[-1].split('.')[0])
 
 
 def load_model_args(results_dir):
@@ -115,14 +117,15 @@ def load_model(checkpoint_fp, args, hparams, device):
     return transformer
 
 
-def run_sampling(transformer, args, save_dir, snapshots, checkpoint_one):
+def run_sampling(transformer, data, args, save_dir, snapshots, checkpoint_one):
     # generate samples for test hamiltonians
-    test_data = load_data(args, split='test')
+    test_data = data
     # couplings, couplings_ids = load_couplings(test_data_dir)
-    test_save_dir = os.path.join(save_dir)
-    if not os.path.exists(test_save_dir):
-        os.makedirs(test_save_dir)
+    # test_save_dir = os.path.join(save_dir)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
+    results = []
     for i, condition in enumerate(test_data['conditions']):
         condition = torch.from_numpy(np.array([condition])).float().to(transformer.device)
         gen_samples = transformer.sample_batch(cond_var=condition, batch_size=snapshots,
@@ -130,9 +133,12 @@ def run_sampling(transformer, args, save_dir, snapshots, checkpoint_one):
 
         # save samples
         gen_samples = gen_samples.astype(int)
-        np.savetxt(os.path.join(test_save_dir, f'samples_{snapshots}_id_{i+1}.txt'), 
-                   gen_samples, 
-                   fmt='%d', delimiter=',')
+        results.append(gen_samples)
+
+    results = np.stack(results, axis=0)
+    np.savetxt(os.path.join(save_dir, f'{checkpoint_one}.txt'), 
+                gen_samples, 
+                fmt='%d', delimiter=',')
 
 
 def load_couplings(data_dir):
