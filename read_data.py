@@ -32,6 +32,69 @@ def read_csv_from_dir(path, prefix: str = None, suffix: str = None, shape: tuple
 
     return arrays
 
+def load_test_data(data_args, num_measurements: int = None):
+    if num_measurements == None:
+        num_measurements = 1000
+    elif num_measurements > 1000:
+        raise ValueError("The number of measurements should be less than 1000.")
+    
+    path = os.path.join('../DiffuSeq/data/', data_args.data_dir)
+    if not os.path.exists(path):
+        raise ValueError(f"Data directory {path} does not exist.")
+    
+    print('#'*30, '\nLoading test dataset from {}...'.format(data_args.data_dir))
+
+    dataset = {}
+
+    conditions = read_csv_from_dir(join(path, 'J'), 
+                                   prefix='J_', 
+                                   suffix='.csv', 
+                                   dtype=np.float32)
+    conditions_array = np.stack(conditions, axis=0) # shape is (n_samples, dim_conditions)
+
+
+    bits = read_csv_from_dir(join(path, 'samples'), 
+                             prefix='povm_samples_', 
+                             suffix='.csv', 
+                             shape=(num_measurements, -1),
+                             dtype=np.int64)
+    recipes = read_csv_from_dir(join(path, 'basis'),
+                                prefix='povm_basis_',
+                                suffix='.csv',
+                                shape=(num_measurements, -1),
+                                dtype=np.int64)
+    assert len(bits) == len(recipes) == len(conditions_array), 'The number of bits and recipes should be the same.'
+    # bits_array = np.stack(bits, axis=0)
+    bits_array = np.stack(bits, axis=0) - 1
+    recipes_array = np.stack(recipes, axis=0)
+    measurements = 2 * recipes_array + bits_array # shape is (n_samples, n_measurements, n_qubits)
+    assert measurements.ndim == 3, 'The shape of measurements should be (n_samples, n_measurements, n_qubits).'
+    
+    # expand the conditions array to the same shape as measurements
+    # _shape = (measurements.shape[0], measurements.shape[1], conditions_array.shape[-1])
+    # conditions_array = np.broadcast_to(conditions_array[:, np.newaxis, :], _shape)
+
+    # reshape to (n_samples * n_measurements, -1)
+    dataset['conditions'] = conditions_array # shape is (n_samples, dim_conditions)
+    dataset['input_ids'] = measurements # shape is (n_samples, n_measurements, n_qubits)
+
+    # dataset['input_mask'] = np.ones((dataset['input_ids'].shape[0], dataset['input_ids'].shape[1] + 1), dtype=np.int64) # (n_samples * n_measurements, 1 + n_qubits)
+    # dataset['input_mask'][:, 0] = 0 # set the first element to 0
+    # assert dataset['conditions'].shape[0] == dataset['input_ids'].shape[0] == dataset['input_mask'].shape[0], 'The number of conditions and measurements should be the same.'
+    # assert dataset['input_ids'].ndim == dataset['input_mask'].ndim and dataset['input_mask'].shape[-1] == dataset['input_ids'].shape[-1] + 1 , 'The shape of input_ids and input_mask should be the same.'
+    
+    print('### Total number of samples:', dataset['input_ids'].shape[0])
+    print('### The dimension of conditions:', dataset['conditions'].shape[-1])
+    print('### The number of qubits:', dataset['input_ids'].shape[-1])
+    print('### Data samples...\n', dataset['conditions'][:2], '\n', dataset['input_ids'][0][:2])
+        
+    return dataset
+
+
+        
+
+
+
 
 def load_data(data_args, split='train'):
     print('#'*30, '\nLoading dataset from {}...'.format(data_args.data_dir))
